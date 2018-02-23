@@ -1,11 +1,11 @@
 etcd:
   name:                        "{HOSTNAME}"
-  listen_peer_urls:            "http://0.0.0.0:2380"
+  listen_peer_urls:            "http://{PRIVATE_IPV4}:2380"
   listen_client_urls:          "http://0.0.0.0:2379"
-  initial_advertise_peer_urls: "http://0.0.0.0:2380"
-  advertise_client_urls:       "http://0.0.0.0:2379"
+  initial_advertise_peer_urls: "http://{PRIVATE_IPV4}:2380"
+  advertise_client_urls:       "http://{PRIVATE_IPV4}:2379"
   # replace "<token>" with a valid etcd discovery token
-  discovery:                   "https://discovery.etcd.io/5548dd3cebb6c348b22c548ea293df44"
+  discovery:                   "https://discovery.etcd.io/705e4bfca52d4c77fd52b670920dc9a6"
 
 systemd:
   units:

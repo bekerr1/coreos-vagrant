@@ -18,13 +18,22 @@ if not plugins_to_install.empty?
   end
 end
 
-CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "user-data")
 IGNITION_CONFIG_PATH = File.join(File.dirname(__FILE__), "config.ign")
-CONFIG = File.join(File.dirname(__FILE__), "config.rb")
 
 # Defaults for config options defined in CONFIG
-$num_instances = 1
-$instance_name_prefix = "core"
+$etcd_cluster_count = 2
+$etcd_instance_pre = "core-etcd"
+$etcd_start_ip = 100
+$kube_masters = 1
+$kube_masters_start_ip = 100 + $etcd_cluster_count
+$kube_master_pre = "core-master"
+$kube_workers = 1
+$kube_workers_start_ip = 100 + $etcd_cluster_count + $kube_masters
+$kube_worker_pre = "core-work"
+
+
+# $num_instances = 3
+# $instance_name_prefix = "core"
 $enable_serial_logging = false
 $share_home = false
 $vm_gui = false
@@ -33,16 +42,6 @@ $vm_cpus = 1
 $vb_cpuexecutioncap = 100
 $shared_folders = {}
 $forwarded_ports = {}
-
-# Attempt to apply the deprecated environment variable NUM_INSTANCES to
-# $num_instances while allowing config.rb to override it
-if ENV["NUM_INSTANCES"].to_i > 0 && ENV["NUM_INSTANCES"]
-  $num_instances = ENV["NUM_INSTANCES"].to_i
-end
-
-if File.exist?(CONFIG)
-  require CONFIG
-end
 
 # Use old vb_xxx config variables when set
 def vm_gui
@@ -66,12 +65,6 @@ Vagrant.configure("2") do |config|
   config.vm.box = "coreos-alpha"
   config.vm.box_url = "https://alpha.release.core-os.net/amd64-usr/current/coreos_production_vagrant_virtualbox.json"
 
-  ["vmware_fusion", "vmware_workstation"].each do |vmware|
-    config.vm.provider vmware do |v, override|
-      override.vm.box_url = "https://alpha.release.core-os.net/amd64-usr/current/coreos_production_vagrant_vmware_fusion.json"
-    end
-  end
-
   config.vm.provider :virtualbox do |v|
     # On VirtualBox, we don't have guest additions or a functional vboxsf
     # in CoreOS, so tell Vagrant that so it can be smarter.
@@ -86,8 +79,10 @@ Vagrant.configure("2") do |config|
     config.vbguest.auto_update = false
   end
 
-  (1..$num_instances).each do |i|
-    config.vm.define vm_name = "%s-%02d" % [$instance_name_prefix, i] do |config|
+
+  # etcd cluster config
+  (1..$etcd_cluster_count).each do |i|
+    config.vm.define vm_name = "%s-%02d" % [$etcd_instance_pre, i] do |config|
       config.vm.hostname = vm_name
 
       if $enable_serial_logging
@@ -96,15 +91,6 @@ Vagrant.configure("2") do |config|
 
         serialFile = File.join(logdir, "%s-serial.txt" % vm_name)
         FileUtils.touch(serialFile)
-
-        ["vmware_fusion", "vmware_workstation"].each do |vmware|
-          config.vm.provider vmware do |v, override|
-            v.vmx["serial0.present"] = "TRUE"
-            v.vmx["serial0.fileType"] = "file"
-            v.vmx["serial0.fileName"] = serialFile
-            v.vmx["serial0.tryNoRxLoss"] = "FALSE"
-          end
-        end
 
         config.vm.provider :virtualbox do |vb, override|
           vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
@@ -120,14 +106,6 @@ Vagrant.configure("2") do |config|
         config.vm.network "forwarded_port", guest: guest, host: host, auto_correct: true
       end
 
-      ["vmware_fusion", "vmware_workstation"].each do |vmware|
-        config.vm.provider vmware do |v|
-          v.gui = vm_gui
-          v.vmx['memsize'] = vm_memory
-          v.vmx['numvcpus'] = vm_cpus
-        end
-      end
-
       config.vm.provider :virtualbox do |vb|
         vb.gui = vm_gui
         vb.memory = vm_memory
@@ -141,26 +119,116 @@ Vagrant.configure("2") do |config|
       # This tells Ignition what the IP for eth1 (the host-only adapter) should be
       config.ignition.ip = ip
 
-      # Uncomment below to enable NFS for sharing the host machine into the coreos-vagrant VM.
-      #config.vm.synced_folder ".", "/home/core/share", id: "core", :nfs => true, :mount_options => ['nolock,vers=3,udp']
-      $shared_folders.each_with_index do |(host_folder, guest_folder), index|
-        config.vm.synced_folder host_folder.to_s, guest_folder.to_s, id: "core-share%02d" % index, nfs: true, mount_options: ['nolock,vers=3,udp']
+      config.vm.provider :virtualbox do |vb|
+        config.ignition.hostname = vm_name
+        config.ignition.drive_name = "config-etcd" + i.to_s
+        # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
+        # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
+        if File.exist?(IGNITION_CONFIG_PATH)
+          config.ignition.path = 'config.ign'
+        end
+      end
+    end
+  end
+
+
+
+  # kube master config
+  (1..$kube_masters).each do |i|
+    config.vm.define vm_name = "%s-%02d" % [$kube_master_pre, i] do |config|
+      config.vm.hostname = vm_name
+
+      if $enable_serial_logging
+        logdir = File.join(File.dirname(__FILE__), "log")
+        FileUtils.mkdir_p(logdir)
+
+        serialFile = File.join(logdir, "%s-serial.txt" % vm_name)
+        FileUtils.touch(serialFile)
+
+        config.vm.provider :virtualbox do |vb, override|
+          vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
+          vb.customize ["modifyvm", :id, "--uartmode1", serialFile]
+        end
       end
 
-      if $share_home
-        config.vm.synced_folder ENV['HOME'], ENV['HOME'], id: "home", :nfs => true, :mount_options => ['nolock,vers=3,udp']
+      if $expose_docker_tcp
+        config.vm.network "forwarded_port", guest: 2375, host: ($expose_docker_tcp + i - 1), host_ip: "127.0.0.1", auto_correct: true
       end
 
-      # This shouldn't be used for the virtualbox provider (it doesn't have any effect if it is though)
-      if File.exist?(CLOUD_CONFIG_PATH)
-        config.vm.provision :file, :source => "#{CLOUD_CONFIG_PATH}", :destination => "/tmp/vagrantfile-user-data"
-        config.vm.provision :shell, inline: "mkdir /var/lib/coreos-vagrant", :privileged => true
-        config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+      $forwarded_ports.each do |guest, host|
+        config.vm.network "forwarded_port", guest: guest, host: host, auto_correct: true
       end
 
       config.vm.provider :virtualbox do |vb|
+        vb.gui = vm_gui
+        vb.memory = vm_memory
+        vb.cpus = vm_cpus
+        vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{$vb_cpuexecutioncap}"]
+        config.ignition.config_obj = vb
+      end
+
+      ip = "172.17.8.#{i+$kube_masters_start_ip}"
+      config.vm.network :private_network, ip: ip
+      # This tells Ignition what the IP for eth1 (the host-only adapter) should be
+      config.ignition.ip = ip
+
+      config.vm.provider :virtualbox do |vb|
         config.ignition.hostname = vm_name
-        config.ignition.drive_name = "config" + i.to_s
+        config.ignition.drive_name = "config-kubeM" + i.to_s
+        # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
+        # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
+        if File.exist?(IGNITION_CONFIG_PATH)
+          config.ignition.path = 'config.ign'
+        end
+      end
+    end
+  end
+
+
+
+
+  # kube worker config
+  (1..$kube_workers).each do |i|
+    config.vm.define vm_name = "%s-%02d" % [$kube_worker_pre, i] do |config|
+      config.vm.hostname = vm_name
+
+      if $enable_serial_logging
+        logdir = File.join(File.dirname(__FILE__), "log")
+        FileUtils.mkdir_p(logdir)
+
+        serialFile = File.join(logdir, "%s-serial.txt" % vm_name)
+        FileUtils.touch(serialFile)
+
+        config.vm.provider :virtualbox do |vb, override|
+          vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
+          vb.customize ["modifyvm", :id, "--uartmode1", serialFile]
+        end
+      end
+
+      if $expose_docker_tcp
+        config.vm.network "forwarded_port", guest: 2375, host: ($expose_docker_tcp + i - 1), host_ip: "127.0.0.1", auto_correct: true
+      end
+
+      $forwarded_ports.each do |guest, host|
+        config.vm.network "forwarded_port", guest: guest, host: host, auto_correct: true
+      end
+
+      config.vm.provider :virtualbox do |vb|
+        vb.gui = vm_gui
+        vb.memory = vm_memory
+        vb.cpus = vm_cpus
+        vb.customize ["modifyvm", :id, "--cpuexecutioncap", "#{$vb_cpuexecutioncap}"]
+        config.ignition.config_obj = vb
+      end
+
+      ip = "172.17.8.#{i+$kube_workers_start_ip}"
+      config.vm.network :private_network, ip: ip
+      # This tells Ignition what the IP for eth1 (the host-only adapter) should be
+      config.ignition.ip = ip
+
+      config.vm.provider :virtualbox do |vb|
+        config.ignition.hostname = vm_name
+        config.ignition.drive_name = "config-kubeW" + i.to_s
         # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
         # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
         if File.exist?(IGNITION_CONFIG_PATH)
