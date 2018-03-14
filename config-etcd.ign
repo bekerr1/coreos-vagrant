@@ -1,0 +1,48 @@
+{
+  "ignition": {
+    "config": {},
+    "timeouts": {},
+    "version": "2.1.0"
+  },
+  "networkd": {},
+  "passwd": {},
+  "storage": {},
+  "systemd": {
+    "units": [
+      {
+        "dropins": [
+          {
+            "contents": "[Unit]\nRequires=coreos-metadata.service\nAfter=coreos-metadata.service\n\n[Service]\nEnvironmentFile=/run/metadata/coreos\nExecStart=\nExecStart=/usr/lib/coreos/etcd-wrapper $ETCD_OPTS \\\n  --name=\"${COREOS_VAGRANT_VIRTUALBOX_HOSTNAME}\" \\\n  --listen-peer-urls=\"http://0.0.0.0:2380\" \\\n  --listen-client-urls=\"http://0.0.0.0:2379\" \\\n  --initial-advertise-peer-urls=\"http://0.0.0.0:2380\" \\\n  --advertise-client-urls=\"http://0.0.0.0:2379\" \\\n  --discovery=\"https://discovery.etcd.io/d67d68b6035bb6af01d34d9352012db4\"",
+            "name": "20-clct-etcd-member.conf"
+          }
+        ],
+        "enable": true,
+        "name": "etcd-member.service"
+      },
+      {
+        "dropins": [
+          {
+            "contents": "[Service]\nExecStart=\nExecStart=/usr/lib/coreos/flannel-wrapper $FLANNEL_OPTS",
+            "name": "20-clct-flannel.conf"
+          }
+        ],
+        "enable": true,
+        "name": "flanneld.service"
+      },
+      {
+        "contents": "[Unit]\nDescription=Docker Socket for the API\n\n[Socket]\nListenStream=2375\nService=docker.service\nBindIPv6Only=both\n\n[Install]\nWantedBy=sockets.target\n",
+        "enable": true,
+        "name": "docker-tcp.socket"
+      },
+      {
+        "dropins": [
+          {
+            "contents": "[Service]\nExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{\"Network\":\"10.2.0.0/16\",\"Backend\":{\"Type\":\"vxlan\"}}'\n",
+            "name": "50-network-config.conf"
+          }
+        ],
+        "name": "flanneld.service"
+      }
+    ]
+  }
+}

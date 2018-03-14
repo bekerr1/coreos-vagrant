@@ -18,17 +18,21 @@ if not plugins_to_install.empty?
   end
 end
 
-IGNITION_CONFIG_PATH = File.join(File.dirname(__FILE__), "config.ign")
+IGNITION_CONFIG_ETCD_PATH = File.join(File.dirname(__FILE__), "config-etcd.ign")
+IGNITION_CONFIG_MASTER_PATH = File.join(File.dirname(__FILE__), "config-master.ign")
+IGNITION_CONFIG_WORKER_PATH = File.join(File.dirname(__FILE__), "config-worker.ign")
+
 
 # Defaults for config options defined in CONFIG
-$etcd_cluster_count = 2
+$start_ip = 99 # i starts at 1 in iterations below, want true start_ip of 100
+$etcd_cluster_count = 1
 $etcd_instance_pre = "core-etcd"
-$etcd_start_ip = 100
+$etcd_start_ip = $start_ip
 $kube_masters = 1
-$kube_masters_start_ip = 100 + $etcd_cluster_count
+$kube_masters_start_ip = $start_ip + $etcd_cluster_count
 $kube_master_pre = "core-master"
-$kube_workers = 1
-$kube_workers_start_ip = 100 + $etcd_cluster_count + $kube_masters
+$kube_workers = 0
+$kube_workers_start_ip = $start_ip + $etcd_cluster_count + $kube_masters
 $kube_worker_pre = "core-work"
 
 
@@ -114,7 +118,7 @@ Vagrant.configure("2") do |config|
         config.ignition.config_obj = vb
       end
 
-      ip = "172.17.8.#{i+100}"
+      ip = "172.17.8.#{i+$etcd_start_ip}"
       config.vm.network :private_network, ip: ip
       # This tells Ignition what the IP for eth1 (the host-only adapter) should be
       config.ignition.ip = ip
@@ -124,8 +128,8 @@ Vagrant.configure("2") do |config|
         config.ignition.drive_name = "config-etcd" + i.to_s
         # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
         # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
-        if File.exist?(IGNITION_CONFIG_PATH)
-          config.ignition.path = 'config.ign'
+        if File.exist?(IGNITION_CONFIG_ETCD_PATH)
+          config.ignition.path = 'config-etcd.ign'
         end
       end
     end
@@ -177,8 +181,8 @@ Vagrant.configure("2") do |config|
         config.ignition.drive_name = "config-kubeM" + i.to_s
         # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
         # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
-        if File.exist?(IGNITION_CONFIG_PATH)
-          config.ignition.path = 'config.ign'
+        if File.exist?(IGNITION_CONFIG_MASTER_PATH)
+          config.ignition.path = 'config-master.ign'
         end
       end
     end
@@ -231,8 +235,8 @@ Vagrant.configure("2") do |config|
         config.ignition.drive_name = "config-kubeW" + i.to_s
         # when the ignition config doesn't exist, the plugin automatically generates a very basic Ignition with the ssh key
         # and previously specified options (ip and hostname). Otherwise, it appends those to the provided config.ign below
-        if File.exist?(IGNITION_CONFIG_PATH)
-          config.ignition.path = 'config.ign'
+        if File.exist?(IGNITION_CONFIG_WORKER_PATH)
+          config.ignition.path = 'config-worker.ign'
         end
       end
     end
